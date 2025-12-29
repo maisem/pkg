@@ -91,7 +91,7 @@ func TestListenerPort(t *testing.T) {
 	}
 	for _, tt := range tests {
 		s := &Server{}
-		s.initOnce.Do(func() { s.initErr = errNone })
+		s.lazyInit.Set(errNone)
 		_, err := s.Listen(tt.network, tt.addr)
 		gotErr := err != nil && err != errNone
 		if gotErr != tt.wantErr {

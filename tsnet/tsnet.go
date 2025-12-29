@@ -5,6 +5,7 @@
 package tsnet
 
 import (
+	"cmp"
 	"context"
 	crand "crypto/rand"
 	"crypto/tls"
@@ -26,14 +27,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tailscale/wireguard-go/tun"
 	"tailscale.com/client/local"
 	"tailscale.com/control/controlclient"
 	"tailscale.com/envknob"
-	_ "tailscale.com/feature/c2n"
-	_ "tailscale.com/feature/condregister/oauthkey"
-	_ "tailscale.com/feature/condregister/portmapper"
-	_ "tailscale.com/feature/condregister/useproxy"
-	"tailscale.com/health"
 	"tailscale.com/hostinfo"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnauth"
@@ -42,23 +39,20 @@ import (
 	"tailscale.com/ipn/localapi"
 	"tailscale.com/ipn/store"
 	"tailscale.com/ipn/store/mem"
-	"tailscale.com/logpolicy"
-	"tailscale.com/logtail"
-	"tailscale.com/logtail/filch"
 	"tailscale.com/net/memnet"
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/proxymux"
 	"tailscale.com/net/socks5"
 	"tailscale.com/net/tsdial"
+	"tailscale.com/net/tstun"
 	"tailscale.com/tsd"
 	"tailscale.com/types/bools"
+	"tailscale.com/types/lazy"
 	"tailscale.com/types/logger"
 	"tailscale.com/types/logid"
 	"tailscale.com/types/nettype"
-	"tailscale.com/util/clientmetric"
 	"tailscale.com/util/mak"
 	"tailscale.com/util/set"
-	"tailscale.com/util/testenv"
 	"tailscale.com/wgengine"
 	"tailscale.com/wgengine/netstack"
 )
@@ -118,10 +112,6 @@ type Server struct {
 	// If empty, the Tailscale default is used.
 	ControlURL string
 
-	// RunWebClient, if true, runs a client for managing this node over
-	// its Tailscale interface on port 5252.
-	RunWebClient bool
-
 	// Port is the UDP port to listen on for WireGuard and peer-to-peer
 	// traffic. If zero, a port is automatically selected. Leave this
 	// field at zero unless you know what you are doing.
@@ -133,10 +123,18 @@ type Server struct {
 	// that the control server will allow the node to adopt that tag.
 	AdvertiseTags []string
 
+	// NetworkDevice is the name of the TUN or TAP device to use for the
+	// network. If empty, only userspace network is used. This is only supported
+	// on Linux.
+	//
+	// For TAP devices, prefix with `tap:[TAP_DEVICE]:[BRIDGE_DEVICE]` or
+	// `tap:[TAP_DEVICE]`. If a bridge is specified, the TAP device will be
+	// added to the bridge.
+	NetworkDevice string
+
 	getCertForTesting func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 
-	initOnce         sync.Once
-	initErr          error
+	lazyInit         lazy.SyncValue[error]
 	lb               *ipnlocal.LocalBackend
 	sys              *tsd.System
 	netstack         *netstack.Impl
@@ -151,15 +149,35 @@ type Server struct {
 	localAPIListener net.Listener  // in-memory, used by localClient
 	localClient      *local.Client // in-memory
 	localAPIServer   *http.Server
-	logbuffer        *filch.Filch
-	logtail          *logtail.Logger
 	logid            logid.PublicID
+	transport        http.RoundTripper
 
 	mu                  sync.Mutex
 	listeners           map[listenKey]*listener
 	fallbackTCPHandlers set.HandleSet[FallbackTCPHandler]
 	dialer              *tsdial.Dialer
 	closed              bool
+}
+
+type roundTripperFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func (s *Server) NoiseClient() *http.Client {
+	return &http.Client{
+		Transport: roundTripperFunc(s.DoNoiseRequest),
+	}
+}
+
+// DoNoiseRequest sends a request to URL over the control plane Noise
+// connection.
+func (s *Server) DoNoiseRequest(req *http.Request) (*http.Response, error) {
+	if err := s.Start(); err != nil {
+		return nil, err
+	}
+	return s.lb.DoNoiseRequest(req)
 }
 
 // FallbackTCPHandler describes the callback which
@@ -222,10 +240,14 @@ func (s *Server) awaitRunning(ctx context.Context) error {
 // your tailnet.
 func (s *Server) HTTPClient() *http.Client {
 	return &http.Client{
-		Transport: &http.Transport{
-			DialContext: s.Dial,
-		},
+		Transport: s.Transport(),
 	}
+}
+
+// Transport returns the http.RoundTripper for the server.
+// It can be used to make requests over the tailnet.
+func (s *Server) Transport() http.RoundTripper {
+	return s.transport
 }
 
 // LocalClient returns a LocalClient that speaks to s.
@@ -337,8 +359,13 @@ func (h *localSecHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Optional: any calls to Dial/Listen will also call Start.
 func (s *Server) Start() error {
 	hostinfo.SetPackage("tsnet")
-	s.initOnce.Do(s.doInit)
-	return s.initErr
+	return s.lazyInit.Get(func() error {
+		s.shutdownCtx, s.shutdownCancel = context.WithCancel(context.Background())
+		if err := s.start(); err != nil {
+			return fmt.Errorf("tsnet: %w", err)
+		}
+		return nil
+	})
 }
 
 // Up connects the server to the tailnet and waits until it is running.
@@ -349,7 +376,7 @@ func (s *Server) Up(ctx context.Context) (*ipnstate.Status, error) {
 		return nil, fmt.Errorf("tsnet.Up: %w", err)
 	}
 
-	watcher, err := lc.WatchIPNBus(ctx, ipn.NotifyInitialState)
+	watcher, err := lc.WatchIPNBus(ctx, ipn.NotifyInitialState|ipn.NotifyNoPrivateKeys)
 	if err != nil {
 		return nil, fmt.Errorf("tsnet.Up: %w", err)
 	}
@@ -407,17 +434,6 @@ func (s *Server) Close() error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// Perform a best-effort final flush.
-		if s.logtail != nil {
-			s.logtail.Shutdown(ctx)
-		}
-		if s.logbuffer != nil {
-			s.logbuffer.Close()
-		}
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
 		if s.localAPIServer != nil {
 			s.localAPIServer.Shutdown(ctx)
 		}
@@ -455,13 +471,6 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func (s *Server) doInit() {
-	s.shutdownCtx, s.shutdownCancel = context.WithCancel(context.Background())
-	if err := s.start(); err != nil {
-		s.initErr = fmt.Errorf("tsnet: %w", err)
-	}
-}
-
 // CertDomains returns the list of domains for which the server can
 // provide TLS certificates. These are also the DNS names for the
 // Server.
@@ -496,29 +505,18 @@ func (s *Server) TailscaleIPs() (ip4, ip6 netip.Addr) {
 	return ip4, ip6
 }
 
-// LogtailWriter returns an [io.Writer] that writes to Tailscale's logging service and will be only visible to Tailscale's
-// support team. Logs written there cannot be retrieved by the user. This method always returns a non-nil value.
-func (s *Server) LogtailWriter() io.Writer {
-	if s.logtail == nil {
-		return io.Discard
-	}
-
-	return s.logtail
-}
-
 func (s *Server) getAuthKey() string {
-	if v := s.AuthKey; v != "" {
-		return v
-	}
-	if v := os.Getenv("TS_AUTHKEY"); v != "" {
-		return v
-	}
-	return os.Getenv("TS_AUTH_KEY")
+	return cmp.Or(s.AuthKey, os.Getenv("TS_AUTHKEY"), os.Getenv("TS_AUTH_KEY"))
 }
 
 func (s *Server) start() (reterr error) {
 	var closePool closeOnErrorPool
 	defer closePool.closeAllIfError(&reterr)
+	plid, err := logid.NewPrivateID()
+	if err != nil {
+		return fmt.Errorf("failed to create logid: %w", err)
+	}
+	s.logid = plid.Public()
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -570,9 +568,6 @@ func (s *Server) start() (reterr error) {
 	}
 
 	tsLogf := func(format string, a ...any) {
-		if s.logtail != nil {
-			s.logtail.Logf(format, a...)
-		}
 		if s.Logf == nil {
 			return
 		}
@@ -581,9 +576,6 @@ func (s *Server) start() (reterr error) {
 
 	sys := tsd.NewSystem()
 	s.sys = sys
-	if err := s.startLogger(&closePool, sys.HealthTracker.Get(), tsLogf); err != nil {
-		return err
-	}
 
 	s.netMon, err = netmon.New(sys.Bus.Get(), tsLogf)
 	if err != nil {
@@ -591,16 +583,34 @@ func (s *Server) start() (reterr error) {
 	}
 	closePool.add(s.netMon)
 
+	var tunDevice tun.Device
+	var isTAP bool
+	onlyNetstack := false
+	if s.NetworkDevice != "" { // desired name
+		var actualDeviceName string
+		tunDevice, actualDeviceName, err = tstun.New(tsLogf, s.NetworkDevice)
+		if err != nil {
+			return fmt.Errorf("failed to create tun device: %w", err)
+		}
+		s.netMon.SetTailscaleInterfaceName(actualDeviceName)
+		isTAP = strings.HasPrefix(s.NetworkDevice, "tap:")
+	} else {
+		onlyNetstack = true
+		tunDevice = tstun.NewFake()
+	}
+
+	ht := sys.HealthTracker.Get()
 	s.dialer = &tsdial.Dialer{Logf: tsLogf} // mutated below (before used)
-	s.dialer.SetBus(sys.Bus.Get())
 	eng, err := wgengine.NewUserspaceEngine(tsLogf, wgengine.Config{
+		Tun:           tunDevice,
+		IsTAP:         isTAP,
 		EventBus:      sys.Bus.Get(),
 		ListenPort:    s.Port,
 		NetMon:        s.netMon,
 		Dialer:        s.dialer,
 		SetSubsystem:  sys.Set,
 		ControlKnobs:  sys.ControlKnobs(),
-		HealthTracker: sys.HealthTracker.Get(),
+		HealthTracker: ht,
 		Metrics:       sys.UserMetricsRegistry(),
 	})
 	if err != nil {
@@ -608,7 +618,7 @@ func (s *Server) start() (reterr error) {
 	}
 	closePool.add(s.dialer)
 	sys.Set(eng)
-	sys.HealthTracker.Get().SetMetricsRegistry(sys.UserMetricsRegistry())
+	ht.SetMetricsRegistry(sys.UserMetricsRegistry())
 
 	// TODO(oxtoacart): do we need to support Taildrive on tsnet, and if so, how?
 	ns, err := netstack.Create(tsLogf, sys.Tun.Get(), eng, sys.MagicSock.Get(), s.dialer, sys.DNSManager.Get(), sys.ProxyMapper())
@@ -617,8 +627,8 @@ func (s *Server) start() (reterr error) {
 	}
 	sys.Tun.Get().Start()
 	sys.Set(ns)
-	ns.ProcessLocalIPs = true
-	ns.ProcessSubnets = true
+	ns.ProcessLocalIPs = onlyNetstack
+	ns.ProcessSubnets = onlyNetstack
 	ns.GetTCPHandlerForFlow = s.getTCPHandlerForFlow
 	ns.GetUDPHandlerForFlow = s.getUDPHandlerForFlow
 	s.netstack = ns
@@ -681,7 +691,6 @@ func (s *Server) start() (reterr error) {
 	prefs.Hostname = s.hostname
 	prefs.WantRunning = true
 	prefs.ControlURL = s.ControlURL
-	prefs.RunWebClient = s.RunWebClient
 	prefs.AdvertiseTags = s.AdvertiseTags
 	authKey := s.getAuthKey()
 	err = lb.Start(ipn.Options{
@@ -700,7 +709,6 @@ func (s *Server) start() (reterr error) {
 	} else if authKey != "" {
 		s.logf("Authkey is set; but state is %v. Ignoring authkey. Re-run with TSNET_FORCE_LOGIN=1 to force use of authkey.", st)
 	}
-	go s.printAuthURLLoop()
 
 	// Run the localapi handler, to allow fetching LetsEncrypt certs.
 	lah := localapi.NewHandler(localapi.HandlerConfig{
@@ -726,46 +734,10 @@ func (s *Server) start() (reterr error) {
 		}
 	}()
 	closePool.add(s.localAPIListener)
-	return nil
-}
 
-func (s *Server) startLogger(closePool *closeOnErrorPool, health *health.Tracker, tsLogf logger.Logf) error {
-	if testenv.InTest() {
-		return nil
+	s.transport = &http.Transport{
+		DialContext: s.Dial,
 	}
-	cfgPath := filepath.Join(s.rootPath, "tailscaled.log.conf")
-	lpc, err := logpolicy.ConfigFromFile(cfgPath)
-	switch {
-	case os.IsNotExist(err):
-		lpc = logpolicy.NewConfig(logtail.CollectionNode)
-		if err := lpc.Save(cfgPath); err != nil {
-			return fmt.Errorf("logpolicy.Config.Save for %v: %w", cfgPath, err)
-		}
-	case err != nil:
-		return fmt.Errorf("logpolicy.LoadConfig for %v: %w", cfgPath, err)
-	}
-	if err := lpc.Validate(logtail.CollectionNode); err != nil {
-		return fmt.Errorf("logpolicy.Config.Validate for %v: %w", cfgPath, err)
-	}
-	s.logid = lpc.PublicID
-
-	s.logbuffer, err = filch.New(filepath.Join(s.rootPath, "tailscaled"), filch.Options{ReplaceStderr: false})
-	if err != nil {
-		return fmt.Errorf("error creating filch: %w", err)
-	}
-	closePool.add(s.logbuffer)
-	c := logtail.Config{
-		Collection:   lpc.Collection,
-		PrivateID:    lpc.PrivateID,
-		Stderr:       io.Discard, // log everything to Buffer
-		Buffer:       s.logbuffer,
-		CompressLogs: true,
-		Bus:          s.sys.Bus.Get(),
-		HTTPC:        &http.Client{Transport: logpolicy.NewLogtailTransport(logtail.DefaultHost, s.netMon, health, tsLogf)},
-		MetricsDelta: clientmetric.EncodeLogTailMetricsDelta,
-	}
-	s.logtail = logtail.NewLogger(c, tsLogf)
-	closePool.addFunc(func() { s.logtail.Shutdown(context.Background()) })
 	return nil
 }
 
@@ -782,9 +754,6 @@ func (p closeOnErrorPool) closeAllIfError(errp *error) {
 }
 
 func (s *Server) logf(format string, a ...any) {
-	if s.logtail != nil {
-		s.logtail.Logf(format, a...)
-	}
 	if s.UserLogf != nil {
 		s.UserLogf(format, a...)
 		return
@@ -792,27 +761,32 @@ func (s *Server) logf(format string, a ...any) {
 	log.Printf(format, a...)
 }
 
-// printAuthURLLoop loops once every few seconds while the server is still running and
-// is in NeedsLogin state, printing out the auth URL.
-func (s *Server) printAuthURLLoop() {
-	for {
-		if s.shutdownCtx.Err() != nil {
-			return
-		}
-		if st := s.lb.State(); st != ipn.NeedsLogin && st != ipn.NoState {
-			s.logf("AuthLoop: state is %v; done", st)
-			return
-		}
-		st := s.lb.StatusWithoutPeers()
-		if st.AuthURL != "" {
-			s.logf("To start this tsnet server, restart with TS_AUTHKEY set, or go to: %s", st.AuthURL)
-		}
-		select {
-		case <-time.After(5 * time.Second):
-		case <-s.shutdownCtx.Done():
-			return
-		}
+// WaitAuthURL waits for the auth URL to be available and returns it..
+func (s *Server) WaitAuthURL(ctx context.Context) (authURL string, alreadyLoggedIn bool, _ error) {
+	if err := s.Start(); err != nil {
+		return "", false, err
 	}
+	s.lb.WatchNotifications(ctx, ipn.NotifyInitialState, nil, func(n *ipn.Notify) (keepGoing bool) {
+		if n.State != nil && *n.State != ipn.NeedsLogin && *n.State != ipn.NoState {
+			alreadyLoggedIn = true
+			return false
+		}
+
+		// Check for auth URL in the notification
+		if n.BrowseToURL != nil && *n.BrowseToURL != "" {
+			authURL = *n.BrowseToURL
+			return false
+		}
+
+		return true // Continue watching
+	})
+	if authURL == "" && !alreadyLoggedIn {
+		if ctx.Err() != nil {
+			return "", false, ctx.Err()
+		}
+		return "", false, errors.New("unexpected error: auth URL is empty and not logged in")
+	}
+	return authURL, alreadyLoggedIn, nil
 }
 
 // networkForFamily returns one of "tcp4", "tcp6", "udp4", or "udp6".

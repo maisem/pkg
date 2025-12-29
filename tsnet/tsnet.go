@@ -35,7 +35,6 @@ import (
 	_ "tailscale.com/feature/condregister/useproxy"
 	"tailscale.com/health"
 	"tailscale.com/hostinfo"
-	"tailscale.com/internal/client/tailscale"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnauth"
 	"tailscale.com/ipn/ipnlocal"
@@ -685,14 +684,6 @@ func (s *Server) start() (reterr error) {
 	prefs.RunWebClient = s.RunWebClient
 	prefs.AdvertiseTags = s.AdvertiseTags
 	authKey := s.getAuthKey()
-	// Try to use an OAuth secret to generate an auth key if that functionality
-	// is available.
-	if f, ok := tailscale.HookResolveAuthKey.GetOk(); ok {
-		authKey, err = f(s.shutdownCtx, s.getAuthKey(), prefs.AdvertiseTags)
-		if err != nil {
-			return fmt.Errorf("resolving auth key: %w", err)
-		}
-	}
 	err = lb.Start(ipn.Options{
 		UpdatePrefs: prefs,
 		AuthKey:     authKey,

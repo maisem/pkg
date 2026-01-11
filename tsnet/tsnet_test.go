@@ -1101,7 +1101,7 @@ func sendData(logf func(format string, args ...any), ctx context.Context, bytesC
 	}
 
 	logf("all sent (%s), waiting for all packets (%d) to be received", time.Since(sendStart).String(), bytesCount)
-	err, _ = <-allReceived
+	err = <-allReceived
 	if err != nil {
 		return err
 	}

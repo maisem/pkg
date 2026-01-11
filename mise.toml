@@ -1,4 +1,18 @@
 [tools]
 go = "1.25.5"
+pre-commit = "4.5.1"
 "go:golang.org/x/tools/cmd/goimports" = "latest"
 "go:golang.org/x/tools/gopls" = "latest"
+
+
+[tasks.install-githooks]
+description = "Install git hooks via pre-commit"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+git config --local --unset-all core.hooksPath || true
+
+pre-commit install -f --install-hooks \
+  --hook-type pre-commit
+'''

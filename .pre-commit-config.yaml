@@ -1,0 +1,28 @@
+repos:
+  - repo: local
+    hooks:
+      - id: pkg-license-check
+        name: pkg license check
+        entry: tools/hooks/check-license
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: pkg-go-vet
+        name: pkg go vet
+        entry: tools/hooks/go-vet
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: pkg-go-mod-tidy
+        name: pkg go mod tidy
+        entry: tools/hooks/go-mod-tidy-check
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: pkg-staticcheck
+        name: pkg staticcheck
+        entry: tools/hooks/staticcheck
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

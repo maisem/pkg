@@ -1108,6 +1108,7 @@ func (s *Server) ListenFunnel(network, addr string, opts ...FunnelOption) (net.L
 		srvConfig = &ipn.ServeConfig{}
 	}
 	if len(st.CertDomains) == 0 {
+		//lint:ignore ST1005 upstream issue
 		return nil, errors.New("Funnel not available; HTTPS must be enabled. See https://tailscale.com/s/https")
 	}
 	domain := st.CertDomains[0]

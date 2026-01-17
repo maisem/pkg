@@ -19,6 +19,7 @@ import (
 	"tailscale.com/syncs"
 	"tailscale.com/types/logger"
 	"tailscale.com/util/backoff"
+	"tailscale.com/util/ctxkey"
 )
 
 //go:generate go run tailscale.com/cmd/cloner  -clonefunc=false -type=Message,MessageContent,ToolUse,ToolResult,CacheControl,Usage,MessagesRequest,MessagesResponse,ToolChoice,ToolDefinition,Tool
@@ -490,6 +491,13 @@ func NewToolFromSpec[T any](spec ToolSpec[T]) *Tool {
 	}
 }
 
+var toolIDContextKey = ctxkey.New("toolID", "")
+
+// ToolCallID returns the ID of the tool call that is currently being executed.
+func ToolCallID(ctx context.Context) (string, bool) {
+	return toolIDContextKey.ValueOk(ctx)
+}
+
 // toolUseHandler is a function type that processes tool execution requests.
 // It accepts a context and raw JSON input, and returns a string response or an error.
 //
@@ -504,14 +512,15 @@ type toolUseHandler func(ctx context.Context, toolUse *ToolUse) (string, []Messa
 //
 // This allows for type-safe tool implementations with automatic schema validation
 // based on the Go type system. It's the preferred way to implement new tools.
-type ToolHandler[Req any] func(ctx context.Context, toolID string, req Req) (string, []MessageContent, error)
+type ToolHandler[Req any] func(ctx context.Context, req Req) (string, []MessageContent, error)
 
 func (h ToolHandler[Req]) Handle(ctx context.Context, toolUse *ToolUse) (string, []MessageContent, error) {
 	var req Req
 	if err := json.Unmarshal(toolUse.Input, &req); err != nil {
 		return "", nil, err
 	}
-	return h(ctx, toolUse.ID, req)
+	ctx = toolIDContextKey.WithValue(ctx, toolUse.ID)
+	return h(ctx, req)
 }
 
 type Agent struct {

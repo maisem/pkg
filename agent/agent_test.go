@@ -101,7 +101,7 @@ func TestLoopTerminatesOnErrTerminateLoop(t *testing.T) {
 
 			// Create a tool that returns the test error
 			testTool := NewTool("test_tool", "Test tool for ErrTerminateLoop",
-				func(ctx context.Context, toolID string, params struct{}) (string, []MessageContent, error) {
+				func(ctx context.Context, params struct{}) (string, []MessageContent, error) {
 					if tt.toolErr != nil {
 						return "", nil, tt.toolErr
 					}
@@ -201,7 +201,7 @@ func TestLoopReturnsLastResponseOnError(t *testing.T) {
 
 	// Create a tool that triggers another LLM call
 	testTool := NewTool("test_tool", "Test tool",
-		func(ctx context.Context, toolID string, params struct{}) (string, []MessageContent, error) {
+		func(ctx context.Context, params struct{}) (string, []MessageContent, error) {
 			return "tool result", nil, nil
 		})
 
@@ -268,7 +268,7 @@ func TestExecToolsTerminateLoop(t *testing.T) {
 
 	// Create a tool that returns ErrTerminateLoop
 	terminateTool := NewTool("terminate_tool", "Tool that terminates the loop",
-		func(ctx context.Context, toolID string, params struct{}) (string, []MessageContent, error) {
+		func(ctx context.Context, params struct{}) (string, []MessageContent, error) {
 			return "", nil, ErrTerminateLoop
 		})
 
@@ -381,7 +381,7 @@ func TestLoopMaxToolIterationsEarlyCheck(t *testing.T) {
 	// Track if tool was executed
 	toolExecuted := false
 	testTool := NewTool("test_tool", "Test tool",
-		func(ctx context.Context, toolID string, params struct{}) (string, []MessageContent, error) {
+		func(ctx context.Context, params struct{}) (string, []MessageContent, error) {
 			toolExecuted = true
 			return "success", nil, nil
 		})
@@ -538,7 +538,7 @@ func TestLoopMaxToolIterationsCheckedBeforeGeneration(t *testing.T) {
 
 	// Create a simple tool
 	testTool := NewTool("test_tool", "Test tool",
-		func(ctx context.Context, toolID string, params struct{}) (string, []MessageContent, error) {
+		func(ctx context.Context, params struct{}) (string, []MessageContent, error) {
 			return "success", nil, nil
 		})
 

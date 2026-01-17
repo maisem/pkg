@@ -1,3 +1,5 @@
+default_stages: [pre-commit]
+
 repos:
   - repo: local
     hooks:
@@ -26,3 +28,8 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
+      - id: cmtr-prepare-commit-msg
+        name: prepare-commit-msg
+        entry: uvx cmtr@latest prepare-commit-msg
+        language: system
+        stages: [prepare-commit-msg]

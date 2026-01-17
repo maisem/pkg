@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/carlmjohnson/requests v0.25.1
+	github.com/gliderlabs/ssh v0.3.8
 	github.com/google/go-cmp v0.7.0
 	github.com/insomniacslk/dhcp v0.0.0-20231206064809-8c70d406f6d2
 	github.com/invopop/jsonschema v0.13.0
@@ -12,6 +13,7 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
 	github.com/tailscale/wireguard-go v0.0.0-20250716170648-1d0488a3d7da
+	golang.org/x/crypto v0.45.0
 	golang.org/x/net v0.47.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.38.0
@@ -116,7 +118,6 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
-	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
 	golang.org/x/mod v0.30.0 // indirect

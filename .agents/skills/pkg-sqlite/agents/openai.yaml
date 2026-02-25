@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pkg SQLite"
+  short_description: "Help with pkg/sqlite tasks and workflows"
+  default_prompt: "Use pkg.maisem.dev/sqlite patterns for transactions, schema, and migrations"

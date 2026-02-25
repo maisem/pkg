@@ -30,13 +30,13 @@ func (m *Metadata[ID]) GetID() ID {
 
 type User struct {
 	Metadata[UserID] `json:",inline" sql:",inline"`
-	Email            string `json:"email" sql:"stored,unique"`
+	Email            string `json:"email" sql:",stored,unique"`
 }
 
 type UserProject struct {
 	Metadata[UserProjectID] `json:",inline" sql:",inline"`
-	UserID                  UserID    `sql:",stored"`
-	ProjectID               ProjectID `sql:",stored"`
+	UserID                  UserID    `sql:",stored,index,fk:User.ID"`
+	ProjectID               ProjectID `sql:",stored,index"`
 
 	// Create custom indexes using the sqlgen comment.
 	//sqlgen: CREATE UNIQUE INDEX user_project_unique ON user_projects (UserID, ProjectID);

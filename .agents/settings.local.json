@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs -I {} sh -c 'head -1 {} | grep -q \"\"\"\"Copyright\\\\|//\"\"\"\" || echo {}')",
+      "Bash(cat:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}

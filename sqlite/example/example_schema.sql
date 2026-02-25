@@ -16,9 +16,9 @@ CREATE TABLE users (
   JSONObj BLOB NOT NULL,
   CreatedAt INTEGER NOT NULL GENERATED ALWAYS AS (strftime('%s', JSONObj->>'$.CreatedAt')) STORED,
   UpdatedAt INTEGER NOT NULL GENERATED ALWAYS AS (strftime('%s', JSONObj->>'$.UpdatedAt')) STORED,
-  stored TEXT NOT NULL GENERATED ALWAYS AS (JSONObj->>'$.Email') STORED
+  Email TEXT NOT NULL GENERATED ALWAYS AS (JSONObj->>'$.Email') STORED
 ) STRICT;
-CREATE UNIQUE INDEX users_stored ON users (stored);
+CREATE UNIQUE INDEX users_email ON users (Email);
 
 CREATE TABLE user_projects (
   ID INTEGER PRIMARY KEY,
@@ -26,6 +26,9 @@ CREATE TABLE user_projects (
   CreatedAt INTEGER NOT NULL GENERATED ALWAYS AS (strftime('%s', JSONObj->>'$.CreatedAt')) STORED,
   UpdatedAt INTEGER NOT NULL GENERATED ALWAYS AS (strftime('%s', JSONObj->>'$.UpdatedAt')) STORED,
   UserID INTEGER NOT NULL GENERATED ALWAYS AS (JSONObj->>'$.UserID') STORED,
-  ProjectID INTEGER NOT NULL GENERATED ALWAYS AS (JSONObj->>'$.ProjectID') STORED
+  ProjectID INTEGER NOT NULL GENERATED ALWAYS AS (JSONObj->>'$.ProjectID') STORED,
+  FOREIGN KEY (UserID) REFERENCES users(ID) ON DELETE CASCADE
 ) STRICT;
+CREATE INDEX user_projects_user_id ON user_projects (UserID);
+CREATE INDEX user_projects_project_id ON user_projects (ProjectID);
 CREATE UNIQUE INDEX user_project_unique ON user_projects (UserID, ProjectID);

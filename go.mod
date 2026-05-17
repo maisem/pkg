@@ -1,6 +1,6 @@
 module pkg.maisem.dev
 
-go 1.26.1
+go 1.26.3
 
 require (
 	github.com/carlmjohnson/requests v0.25.1
@@ -12,7 +12,7 @@ require (
 	github.com/openai/openai-go v1.12.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.67.5
-	github.com/tailscale/wireguard-go v0.0.0-20250716170648-1d0488a3d7da
+	github.com/tailscale/wireguard-go v0.0.0-20260427181203-e3ac4a0afb4e
 	golang.org/x/crypto v0.51.0
 	golang.org/x/net v0.54.0
 	golang.org/x/sync v0.20.0
@@ -21,7 +21,7 @@ require (
 	google.golang.org/genai v1.57.0
 	gvisor.dev/gvisor v0.0.0-20260224225140-573d5e7127a8
 	modernc.org/sqlite v1.50.1
-	tailscale.com v1.96.5
+	tailscale.com v1.98.2
 )
 
 require (
@@ -103,10 +103,10 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
 	github.com/pires/go-proxyproto v0.12.0 // indirect
 	github.com/pkg/sftp v1.13.10 // indirect
-	github.com/prometheus-community/pro-bing v0.8.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/safchain/ethtool v0.7.0 // indirect
-	github.com/tailscale/certstore v0.1.1-0.20231202035212-d3fa0460f47e // indirect
+	github.com/tailscale/certstore v0.1.1-0.20260409135935-3638fb84b77d // indirect
+	github.com/tailscale/gliderssh v0.3.4-0.20260330083525-c1389c70ff89 // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
 	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd // indirect
 	github.com/tailscale/netlink v1.1.1-0.20240822203006-4d49adab4de7 // indirect
